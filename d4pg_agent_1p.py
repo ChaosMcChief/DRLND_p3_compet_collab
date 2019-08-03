@@ -8,6 +8,7 @@ import models
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+import tensorflow as tf
 
 
 class Agent():
@@ -38,11 +39,12 @@ class Agent():
         self.losses_actor = []
         self.losses_critic = []
 
+        self.loss_fn_critic = torch.nn.MSELoss()
 
         # Initialize bins
-        self.v_min = -1
-        self.v_max = 1
-        self.n_atoms = 51
+        self.v_min = -50
+        self.v_max = 50
+        self.n_atoms = 101
         self.delta = (self.v_max-self.v_min)/float(self.n_atoms-1)
         self.bin_centers = torch.from_numpy(np.array([self.v_min+i*self.delta for i in range(self.n_atoms)]).reshape(-1,1)).to(self.config.device)
 
@@ -90,9 +92,9 @@ class Agent():
 
         # If enough samples are available in memory, get random subset and learn
         if len(self.memory) > self.config.BATCH_SIZE:
-#            if self.t_step % 20 == 0:
-#                for i in range(0,10):
-            self.learn(self.memory.sample(), self.config.GAMMA)
+            if self.t_step % 20 == 0:
+                for i in range(0,10):
+                    self.learn(self.memory.sample(), self.config.GAMMA)
             
     
     def act(self, states):
@@ -138,19 +140,45 @@ class Agent():
         actions_target_next = self.actor_target(next_states[:,-1])
         
         # Evaluate the computed actions with the critic-target-network
-        Q_targets_next = self.critic_target(next_states[:,-1], actions_target_next)
+        Q_targets_next = self.critic_target(next_states[:,-1], actions_target_next).detach()
 
-        q_dist = self.critic(states[:,0], actions[:,0])
-        reprojected_dist = self.reproject(Q_targets_next.cpu().data.numpy(), rewards, dones)
-
-        reprojected_dist = torch.tensor(reprojected_dist, requires_grad=False).to(self.config.device)
-
-        loss_critic = -(reprojected_dist*torch.log(q_dist+1e-010)).sum(dim=1).mean()
+        q_dist = self.critic(states[:,0], actions[:,0]).type(torch.float64)
         
+        rewards = rewards.reshape(self.config.BATCH_SIZE,self.config.N_BOOTSTRAP).cpu().numpy()
+
+        # Calculated the sum of the discounted rewards because of N-step bootstrapping
+        gammas = np.array([self.config.GAMMA**i for i in range(self.config.N_BOOTSTRAP+1)]).reshape((1,-1))
+        gamma = gammas[0,-1]
+        rewards = np.sum(gammas[:,:-1]*rewards, axis=1)
+        
+        z_p = self.bin_centers + torch.tensor(gamma + rewards, device=self.config.device)
+        z_p.transpose_(1,0)
+        z_p[dones[:,-1],:] = 0.0
+        
+        
+        reprojected_dist = self._l2_project(z_p, Q_targets_next, self.bin_centers.squeeze())
+#        reprojected_dist2 = self._l2_project2(z_p.cpu().numpy(), Q_targets_next.cpu().numpy(), self.bin_centers.squeeze().cpu().numpy())
+           
+#        critic_loss2 = tf.nn.softmax_cross_entropy_with_logits_v2(labels=reprojected_dist2, logits=q_dist.detach().cpu().numpy())
+#        critic_loss2 = tf.reduce_mean(critic_loss2)
+#        with tf.Session().as_default():
+#            critic_loss2=critic_loss2.eval()
+        
+#        reprojected_dist = torch.tensor(reprojected_dist, requires_grad=False, device=self.config.device)
+#        reprojected_dist = self.reproject(Q_targets_next.cpu().data.numpy(), rewards, dones)
+
+        #reprojected_dist = torch.tensor(reprojected_dist, requires_grad=False).to(self.config.device)
+
+        loss_critic = -(reprojected_dist*torch.log(F.softmax(q_dist, dim=1))).sum(dim=1).mean()
+#        critic_loss = loss_critic.detach().cpu().numpy()
+#        alpha = tf.reduce_max(logits, axis=-1, keepdims=True)
+#        log_sum_exp = tf.log(tf.reduce_sum(tf.exp(logits - alpha), axis=-1, keepdims=True)) + alpha
+#        cross_entropy = -tf.reduce_sum((logits - log_sum_exp) * labels, axis=-1)
+#        cross_entropy_mean = tf.reduce_mean(cross_entropy)
         
         
         self.losses_critic.append(loss_critic.detach().cpu().numpy())
-
+        
         # critic gradient
         self.critic_optimizer.zero_grad()
         loss_critic.backward()
@@ -171,8 +199,10 @@ class Agent():
         loss_actor = (self.critic(states[:,0], actions_local)).type(torch.float64)
 #        print(loss_actor.dtype)
 #        print(torch.from_numpy(self.bin_centers).dtype)
-        loss_actor = -loss_actor.matmul(self.bin_centers).mean()
+        loss_actor = -(loss_actor.matmul(self.bin_centers).mean())
+        
         self.losses_actor.append(loss_actor.detach().cpu().numpy())
+        
         self.actor_optimizer.zero_grad()
         loss_actor.backward()
         
@@ -209,9 +239,104 @@ class Agent():
 #        
 #        if z<=
         
+    def _l2_project2(self, z_p, p, z_q):
+        """Projects distribution (z_p, p) onto support z_q under L2-metric over CDFs.
+        The supports z_p and z_q are specified as tensors of distinct atoms (given
+        in ascending order).
+        Let Kq be len(z_q) and Kp be len(z_p). This projection works for any
+        support z_q, in particular Kq need not be equal to Kp.
+        Args:
+          z_p: Tensor holding support of distribution p, shape `[batch_size, Kp]`.
+          p: Tensor holding probability values p(z_p[i]), shape `[batch_size, Kp]`.
+          z_q: Tensor holding support to project onto, shape `[Kq]`.
+        Returns:
+          Projection of (z_p, p) onto support z_q under Cramer distance.
+        """
+        # Broadcasting of tensors is used extensively in the code below. To avoid
+        # accidental broadcasting along unintended dimensions, tensors are defensively
+        # reshaped to have equal number of dimensions (3) throughout and intended
+        # shapes are indicated alongside tensor definitions. To reduce verbosity,
+        # extra dimensions of size 1 are inserted by indexing with `None` instead of
+        # `tf.expand_dims()` (e.g., `x[:, None, :]` reshapes a tensor of shape
+        # `[k, l]' to one of shape `[k, 1, l]`).
         
-            
+        p = tf.convert_to_tensor(p, dtype=tf.float64)
+        
+        # Extract vmin and vmax and construct helper tensors from z_q
+        vmin, vmax = z_q[0], z_q[-1]
+        d_pos = tf.concat([z_q, vmin[None]], 0)[1:]  # 1 x Kq x 1
+        d_neg = tf.concat([vmax[None], z_q], 0)[:-1]  # 1 x Kq x 1
+        # Clip z_p to be in new support range (vmin, vmax).
+        z_p = tf.clip_by_value(z_p, vmin, vmax)[:, None, :]  # B x 1 x Kp
+        
+        # Get the distance between atom values in support.
+        d_pos = (d_pos - z_q)[None, :, None]  # z_q[i+1] - z_q[i]. 1 x B x 1
+        d_neg = (z_q - d_neg)[None, :, None]  # z_q[i] - z_q[i-1]. 1 x B x 1
+        z_q = z_q[None, :, None]  # 1 x Kq x 1
+        
+        # Ensure that we do not divide by zero, in case of atoms of identical value.
+        d_neg = tf.where(d_neg > 0, 1./d_neg, tf.zeros_like(d_neg))  # 1 x Kq x 1
+        d_pos = tf.where(d_pos > 0, 1./d_pos, tf.zeros_like(d_pos))  # 1 x Kq x 1
+        
+        delta_qp = z_p - z_q   # clip(z_p)[j] - z_q[i]. B x Kq x Kp
+        d_sign = tf.cast(delta_qp >= 0., dtype=p.dtype)  # B x Kq x Kp
+        
+        # Matrix of entries sgn(a_ij) * |a_ij|, with a_ij = clip(z_p)[j] - z_q[i].
+        # Shape  B x Kq x Kp.
+        delta_hat = (d_sign * delta_qp * d_pos) - ((1. - d_sign) * delta_qp * d_neg)
+        p = p[:, None, :]  # B x 1 x Kp.
+        return tf.reduce_sum(tf.clip_by_value(1. - delta_hat, 0., 1.) * p, 2)    
+#        return [delta_qp, d_sign]
     
+    def _l2_project(self, z_p, p, z_q):
+        """Projects distribution (z_p, p) onto support z_q under L2-metric over CDFs.
+        The supports z_p and z_q are specified as tensors of distinct atoms (given
+        in ascending order).
+        Let Kq be len(z_q) and Kp be len(z_p). This projection works for any
+        support z_q, in particular Kq need not be equal to Kp.
+        Args:
+          z_p: Tensor holding support of distribution p, shape `[batch_size, Kp]`.
+          p: Tensor holding probability values p(z_p[i]), shape `[batch_size, Kp]`.
+          z_q: Tensor holding support to project onto, shape `[Kq]`.
+        Returns:
+          Projection of (z_p, p) onto support z_q under Cramer distance.
+        """
+        # Broadcasting of tensors is used extensively in the code below. To avoid
+        # accidental broadcasting along unintended dimensions, tensors are defensively
+        # reshaped to have equal number of dimensions (3) throughout and intended
+        # shapes are indicated alongside tensor definitions. To reduce verbosity,
+        # extra dimensions of size 1 are inserted by indexing with `None` instead of
+        # `tf.expand_dims()` (e.g., `x[:, None, :]` reshapes a tensor of shape
+        # `[k, l]' to one of shape `[k, 1, l]`).
+        
+        # Extract vmin and vmax and construct helper tensors from z_q
+        vmin, vmax = z_q[0], z_q[-1]
+        d_pos = torch.cat([z_q, vmin[None]], 0)[1:]  # 1 x Kq x 1
+        d_neg = torch.cat([vmax[None], z_q], 0)[:-1]  # 1 x Kq x 1
+        # Clip z_p to be in new support range (vmin, vmax).
+        z_p = torch.clamp(z_p, vmin, vmax)[:, None, :]  # B x 1 x Kp
+        
+        # Get the distance between atom values in support.
+        d_pos = (d_pos - z_q)[None, :, None]  # z_q[i+1] - z_q[i]. 1 x B x 1
+        d_neg = (z_q - d_neg)[None, :, None]  # z_q[i] - z_q[i-1]. 1 x B x 1
+        z_q = z_q[None, :, None]  # 1 x Kq x 1
+        
+        # Ensure that we do not divide by zero, in case of atoms of identical value.
+        d_neg = torch.where(d_neg > 0, 1./d_neg, torch.zeros_like(d_neg))  # 1 x Kq x 1
+        d_pos = torch.where(d_pos > 0, 1./d_pos, torch.zeros_like(d_pos))  # 1 x Kq x 1
+        
+        delta_qp = z_p - z_q   # clip(z_p)[j] - z_q[i]. B x Kq x Kp
+#        tf.cast(delta_qp >= 0., dtype=p.dtype)  # B x Kq x Kp
+        
+        d_sign = torch.zeros(delta_qp.shape, device=self.config.device, dtype=torch.float64)
+        d_sign[delta_qp>=0.] = 1
+        
+        # Matrix of entries sgn(a_ij) * |a_ij|, with a_ij = clip(z_p)[j] - z_q[i].
+        # Shape  B x Kq x Kp.
+        delta_hat = (d_sign * delta_qp * d_pos) - ((1. - d_sign) * delta_qp * d_neg)
+        p = p[:, None, :].type(torch.float64)  # B x 1 x Kp.
+        return torch.sum(torch.clamp(1. - delta_hat, 0., 1.) * p, 2)        
+#        return [delta_qp, d_sign]
 
 
     def reproject(self, target_z_dist, rewards, terminates):
@@ -321,7 +446,7 @@ class ReplayBuffer:
         actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).float().to(self.device)
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(self.device)
         next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(self.device)
-        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(self.device)
+        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).to(self.device)
   
         return (states, actions, rewards, next_states, dones)
 

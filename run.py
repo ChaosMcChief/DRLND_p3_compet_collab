@@ -1,6 +1,7 @@
 import os
 from collections import deque
 import pickle
+import sys
 
 import numpy as np
 import torch
@@ -10,6 +11,13 @@ from tqdm import tqdm
 
 import Config
 from d4pg_agent_1p import Agent
+import ddpg_agent
+
+#import cProfile, pstats, io
+#
+#pr = cProfile.Profile()
+#pr.enable()
+
 
 def setup_env():
     env = UnityEnvironment(file_name='tennis_windows_x86_64/Tennis.exe')
@@ -196,7 +204,16 @@ agent = Agent(config=config,
 #                 random_seed=0)
 
 
-scores = train_agent(n_episodes=10000, model_suff='d4pg_1p_nnloss')
+scores = train_agent(n_episodes=1000, model_suff='d4pg_1p_new_proj')
+
+#pr.disable()
+#s = io.StringIO()
+#ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+#
+#sys.stdout = open('test.txt','w')
+#ps.print_stats()
+#print(s.getvalue())
+
 ##pickle.dump(scores, open('Scores_benchmark.pkl', 'wb'))
 #env.close()
 

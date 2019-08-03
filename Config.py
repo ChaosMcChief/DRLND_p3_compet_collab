@@ -15,7 +15,7 @@ class config():
         self.EPSILON_MIN = 0.001     # Min-value of epsilon
         self.EPSILON_DECAY = 0   # Stepsize of the decay of epsilon
 
-        self.N_BOOTSTRAP = 5        # Value for bootstrapping
+        self.N_BOOTSTRAP = 10        # Value for bootstrapping
 
         self.weight_decay=1e-6
 
