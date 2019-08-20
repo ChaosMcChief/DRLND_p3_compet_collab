@@ -7,8 +7,6 @@ This implementation uses the Deep deterministic policy gradient as explained in 
 ## Code structure
 To start the environment and train/watch an agent, you'll just need to run the jupyter notebook `Tennis.ipynb`. Because previously trained model parameters are also included in this repository, you can skip the training section and directly watch an trained agents interact with the environment. 
 
-The code is tested on the twenty-agent version of the reacher environment, although the code will also work -- without any changes -- with the single-agent version.
-
 Firstly all the hyperparameters for the d4pg-agent are stored in an own simple class `config`, which lies in the [`Config.py`](https://github.com/ChaosMcChief/DRLND_p3_compet_collab/blob/master/Config.py). An instance of the `config`-class has to be passed to the agent while instantiating the agent.
 
 The [`d4pg-agent.py`](https://github.com/ChaosMcChief/DRLND_p3_compet_collab/blob/master/d4pg_agent.py) contains the d4pg-like-agent alongside with the replay memory and an implementation of the Ornstein-Uhlenbeck random process to generate action-noise in order to explore the action-space. An explaination of this random process can be found on the [wikipedia-site](https://en.wikipedia.org/wiki/Ornstein%E2%80%93Uhlenbeck_process)
@@ -38,7 +36,7 @@ self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 ```
 
 ## Results
-The results are shown in the plot below. Interestingly the shown and best results are achieved with a length of 1 for the n-step-bootstrapping. Also, the reason that the score isn't higher, is because agent_1 outperformed agent_2 and agent_2 loses fairly often. If you only let agents play with the learned parameters from agent_1, the games lasts way longer resulting in much higher scores.
+The results are shown in the plot below. Interestingly the shown and best results are achieved with a length of 1 for the n-step-bootstrapping. Also, the reason that the score isn't higher, is because agent_1 outperformed agent_2 and agent_2 loses fairly often and quickly. If you only let agents play with the learned parameters from agent_1, the games lasts way longer resulting in much higher scores.
 
 ![Scoreplot](https://github.com/ChaosMcChief/DRLND_p3_compet_collab/blob/master/Results/Scores.png)
 
